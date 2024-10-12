@@ -27,7 +27,7 @@ def ExtractJPG(debug_tmp_path, type):
                 idx += 1
 
 
-fits_path = r"C:\Workman02\python\OtherProject\ImageStack\Demo01_MyStack\test_input"
+fits_path = r"C:\Workman02\python\OtherProject\pic\2022-12-24-M42-raw-ImageStack\Data\sample1"
 dp = "debug_tmp"
 do_debug = True
 fits_path = Path(fits_path)

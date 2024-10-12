@@ -1,14 +1,14 @@
 import concurrent.futures
-import os
-from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 import shutil
 import itertools
-
 import cv2
-import numpy as np
+import traceback
 
-from utils import *
+from utils.detect import *
+from utils.starlet import *
+from utils.stretch import *
+from utils.transform import *
 
 
 class ImageStackObject():
@@ -100,6 +100,7 @@ class ImageStackObject():
                     # self.stretch_images_list.append(result_img)
                 except Exception as exc:
                     print(f'Task generated an exception: {exc}')
+                    traceback.print_exc()
 
             executor.shutdown()
 
@@ -162,6 +163,7 @@ class ImageStackObject():
                     # self.stretch_images_list.append(result_img)
                 except Exception as exc:
                     print(f'Task generated an exception: {exc}')
+                    traceback.print_exc()
 
             executor.shutdown()
 
@@ -300,14 +302,14 @@ class ImageStackObject():
         :return:
         # Todo Refernce Imgae 不能直接取第0个，需要用程序自动寻找最佳的参考图片，要求参考图片位于所有图片中最居中的位置。
         """
-        reference_img = self.stretch_images_list[reference_index]
-        # reference_img = self.debayer_images_list[reference_index]
+        reference_img = self.debayer_images_list[reference_index]
         reference_triangle_objs = self.triangle_list_list[reference_index]
-        self.realtime_stack_img = reference_img.copy()
+        self.realtime_stack_img = reference_img.copy().astype(np.uint32)
         for i in range(self.process_length):
             print(f"=============Processing {i}-th stack=============")
             if i == reference_index:
                 self.Update_Realtime_View(i, do_debug)
+                continue
             # if i == 2:
             #     print("This is Debug index")
             compare_triangle_objs = self.triangle_list_list[i]
@@ -328,18 +330,20 @@ class ImageStackObject():
     def Update_Realtime_View(self, stack_round, do_debug: bool):
         # 调用一次该函数更新前端显示的self.realtime_stack_img，逻辑上需要这个
         if do_debug:
-            # stretch_realtime_stack = Stretch_RealtimeStack(self.realtime_stack_img.copy(), self.rgb_flag)
+            stretch_realtime_stack = Stretch_RealtimeStack(self.realtime_stack_img.copy().astype(np.uint16), self.rgb_flag)
             realtime_stack_path = os.path.join(self.debug_tmp_path, "realtime_stack")
             if not os.path.exists(realtime_stack_path):
                 os.mkdir(realtime_stack_path)
 
-            # cv2.imwrite(f"{realtime_stack_path}/{stack_round}.jpg", stretch_realtime_stack)
-            cv2.imwrite(f"{realtime_stack_path}/{stack_round}.jpg", self.realtime_stack_img)
+            cv2.imwrite(f"{realtime_stack_path}/{stack_round}.jpg", stretch_realtime_stack)
+            # cv2.imwrite(f"{realtime_stack_path}/{stack_round}_De.jpg", self.realtime_stack_img)
 
     def ImageStackProcess(self, do_debug):
         self.ImageStretch_BatchProcess(do_debug=do_debug)
         self.StarletAnalycis_BatchProcess(do_debug=do_debug)
-        self.RecursiveStarDetect_MultiStars(do_debug=do_debug)
+        self.RecursiveStarDetect_MultiStars(do_debug=do_debug, top_n=8)
         self.Triangle_Analysis(do_debug=do_debug)
         result_img = self.Core_RASP(do_debug=do_debug)
-        return result_img
+        stretch_realtime_stack = Stretch_RealtimeStack(result_img.copy().astype(np.uint16), self.rgb_flag)
+
+        return stretch_realtime_stack
