@@ -37,4 +37,4 @@ cv2.imwrite("stack_res.jpg", res)
 ```
 
 ## :dart: Update Log
-[24/10/16] Update for outliers point removement.
+[24/10/16] Add outliers point removement, add circularity calculation. Add readme. 
