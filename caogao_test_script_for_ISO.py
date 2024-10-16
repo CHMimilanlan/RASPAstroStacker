@@ -1,5 +1,4 @@
 import cv2
-
 from ImageStack import ImageStackObject as ISO
 from pathlib import Path
 import os

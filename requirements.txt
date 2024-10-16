@@ -1,0 +1,6 @@
+numpy
+pyyaml
+opencv-python
+pathlib
+astropy
+numexpr

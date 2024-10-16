@@ -1,0 +1,7 @@
+thresholds:
+  min_aspect_ratio: 1.4
+  min_distri_thresh: 10
+  min_dim_ratio: 8
+  min_circularity: 0.85
+  max_circularity: 1.3
+  mad_threshold: 2.5

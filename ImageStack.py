@@ -31,6 +31,7 @@ class ImageStackObject():
         self.chosen_scale_result_list = [None] * self.process_length
         self.triangle_list_list = [None] * self.process_length
         self.realtime_stack_img = None
+        self.realtime_stack_img_st_debug = None
         self.rgb_flag = True
 
     # Todo 加入更多格式
@@ -141,14 +142,10 @@ class ImageStackObject():
                                                                          debug_tmp_path=_dtp)
         chosen_scale_result = choose_scale_result(multiscale_results_thres, chose_type="white_pixel_count")
         star_obj_list = extract_stars(chosen_scale_result, stretch_grayimg, info_log, do_debug)
-        print("Starlet Analysis done")
         return star_obj_list, stretch_grayimg, chosen_scale_result
 
     def StarletAnalycis_BatchProcess(self, reso_scale=None, do_debug: bool = False, info_log=""):
         with ThreadPoolExecutor(max_workers=5) as executor:
-            # futures = [
-            # executor.submit(self.StarletAnalycis, stretch_image, reso_scale, do_debug, debug_tmp_path, info_log): idx for
-            # idx, stretch_image in enumerate(self.stretch_images_list)]
             futures = {executor.submit(self.StarletAnalycis, stretch_image, idx, reso_scale, do_debug, info_log): idx
                        for
                        idx, stretch_image in enumerate(self.stretch_images_list)}
@@ -157,10 +154,9 @@ class ImageStackObject():
                 idx = futures[future]
                 try:
                     star_obj_list, grayimg, thres_map = future.result()
+                    print(f"Starlet Analysis for image {idx} done, star_list_num:{len(star_obj_list)}")
                     self.star_obj_list_list[idx] = star_obj_list
                     self.chosen_scale_result_list[idx] = thres_map
-                    # print(result_img.shape)
-                    # self.stretch_images_list.append(result_img)
                 except Exception as exc:
                     print(f'Task generated an exception: {exc}')
                     traceback.print_exc()
@@ -175,7 +171,7 @@ class ImageStackObject():
                 _dtp = os.path.join(self.debug_tmp_path, img_name, "starlet_chosen_star")
                 self.write_img(tmp_img, _dtp)
 
-    def RecursiveStarDetect_MultiStars(self, roi_percentage: float = 0.7, top_n=10, do_debug: bool = False):
+    def MultiStarsRedirection(self, idx, roi_percentage: float = 0.7, top_n=10, do_debug: bool = False):
         """
         定义ROI
         # 默认使用三星校准
@@ -197,95 +193,96 @@ class ImageStackObject():
 
         :return:
         """
-        images_num = self.process_length
-        for i in range(images_num):
-            print(f"Processing StarDetect image --- {i}")
-            stretch_img = self.stretch_images_list[i]
-            star_obj_list = self.star_obj_list_list[i]
-            img_name = self.fits_path_list[i].stem
-            # 下面的star obj都经过了redirection
-            roi_star_obj_list = StarObjList_ROICheck_Redirection(star_obj_list, roi_percentage, stretch_img, img_name,
-                                                                 do_debug, self.debug_tmp_path)
-            # Todo 目前先限制了roi内星点数必须大于top_n，后续需要修改的话再在这里入手修改
-            assert len(roi_star_obj_list) >= top_n
+        # images_num = self.process_length
+        # for i in range(images_num):
+        # print(f"Processing StarDetect image --- {idx}")
+        stretch_img = self.stretch_images_list[idx]
+        star_obj_list = self.star_obj_list_list[idx]
+        img_name = self.fits_path_list[idx].stem
+        # 下面的star obj都经过了redirection
+        roi_star_obj_list = StarObjList_ROICheck_Redirection(star_obj_list, roi_percentage, stretch_img, img_name,
+                                                             do_debug, self.debug_tmp_path)
+        # Todo 目前先限制了roi内星点数必须大于top_n，后续需要修改的话再在这里入手修改
+        # assert len(roi_star_obj_list) >= top_n
+        roi_star_obj_list.sort(key=lambda x: x["lightness"], reverse=True)
+        chosen_stars_list = roi_star_obj_list[:top_n]
+        self.star_obj_list_list[idx] = chosen_stars_list
+        if do_debug:
+            tmp_thres = self.chosen_scale_result_list[idx]
+            StarDetect_DebugTmp(tmp_thres, stretch_img, chosen_stars_list, roi_star_obj_list, img_name,
+                                self.debug_tmp_path)
 
-            roi_star_obj_list.sort(key=lambda x: x["lightness"], reverse=True)
-            chosen_stars_list = roi_star_obj_list[:top_n]
-            self.star_obj_list_list[i] = chosen_stars_list
+    def MultiStarsRedirection_BatchProcess(self, roi_percentage: float = 0.7, top_n=10, do_debug: bool = False):
+        length = self.process_length
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = {executor.submit(self.MultiStarsRedirection, idx, roi_percentage, top_n, do_debug): idx
+                       for idx in range(length)}
 
-            if do_debug:
-                tmp_thres = self.chosen_scale_result_list[i]
-                if len(stretch_img.shape) == 3:
-                    tmp_gray = cv2.cvtColor(stretch_img, cv2.COLOR_RGB2GRAY)
-                else:
-                    tmp_gray = stretch_img
+            for future in concurrent.futures.as_completed(futures):
+                idx = futures[future]
+                try:
+                    future.result()
+                    # Todo 添加时间返回值
+                    print(f"MultiStars Redirection for image {idx} done ")
+                except Exception as exc:
+                    print(f'Task generated an exception: {exc}')
+                    traceback.print_exc()
 
-                for star_idx, chosen_star in enumerate(chosen_stars_list):
-                    mark_img = cv2.circle(stretch_img, chosen_star["center_cor"], chosen_star["radius"] + 5,
-                                          (0, 255, 0),
-                                          1)
-                    mark_img = cv2.putText(mark_img,
-                                           str(round(chosen_star["hfr"], 2)) + " " + str(
-                                               round(chosen_star["lightness"], 2)),
-                                           chosen_star["center_cor"], cv2.FONT_HERSHEY_SIMPLEX, 1.0,
-                                           (0, 255, 0), 1,
-                                           cv2.LINE_AA)
-                    _dtp = os.path.join(self.debug_tmp_path, img_name, "star_mark")
-                    self.write_img(mark_img, _dtp)
+            executor.shutdown()
 
-                    # single star's debug tmp
-                    single_star_tmp_path = os.path.join(self.debug_tmp_path, img_name, "recenter")
-                    if not os.path.exists(single_star_tmp_path):
-                        os.mkdir(single_star_tmp_path)
-                    chosen_star_thres_visualize = tmp_thres[
-                                                  chosen_star["bounding_cor"][0]:chosen_star["bounding_cor"][1],
-                                                  chosen_star["bounding_cor"][2]:chosen_star["bounding_cor"][3]]
-                    re_center_gray_star = tmp_gray[chosen_star["bounding_cor"][0]:chosen_star["bounding_cor"][1],
-                                          chosen_star["bounding_cor"][2]:chosen_star["bounding_cor"][3]]
+        if do_debug:
+            for idx, img in enumerate(self.stretch_images_list):
+                img_name = self.fits_path_list[idx].stem
+                _dtp = os.path.join(self.debug_tmp_path, img_name, "stretch_img")
+                self.write_img(img, _dtp)
 
-                    cv2.imwrite(f"{single_star_tmp_path}/re_center_gray_star_{star_idx}.jpg", re_center_gray_star)
-                    cv2.imwrite(f"{single_star_tmp_path}/re_center_thres_star_{star_idx}.jpg",
-                                chosen_star_thres_visualize)
-
-                debug_chosen_star_list = roi_star_obj_list[:5]
-                for chosen_star in debug_chosen_star_list:
-                    _mark_img = cv2.circle(stretch_img, chosen_star["center_cor"], chosen_star["radius"] + 5,
-                                           (255, 0, 0),
-                                           1)
-                    _mark_img = cv2.putText(_mark_img,
-                                            str(round(chosen_star["hfr"], 2)) + " " + str(
-                                                round(chosen_star["lightness"], 2)),
-                                            chosen_star["center_cor"], cv2.FONT_HERSHEY_SIMPLEX, 1.0,
-                                            (255, 0, 0), 1,
-                                            cv2.LINE_AA)
-                    _dtp = os.path.join(self.debug_tmp_path, img_name, "_star_mark")
-                    self.write_img(_mark_img, _dtp)
-
-    def Triangle_Analysis(self, do_debug: bool = False):
+    def Triangle_Analysis(self, idx: int, do_debug: bool = False):
         # Todo 给出多种叠加区域的选择方法，既然能使用for循环递归了，那就可以实现交集、并集、参考图大小等方法，参考siril网站：https://siril.readthedocs.io/en/latest/preprocessing/registration.html，章节Apply Existing registration
         # Todo 在三角形的配准中，需要想一个算法来尽量降低O(N^2)的计算复杂度
         # Todo 考虑同一张图片中出现两个相似的三角形
         # Todo 考虑用KD-Tree优化，K=4，即一颗星与其紧邻的4个星，总共组成5颗星，能够组成10个三角形不变元组，将这几个元组加入到KD-Tree中
+        # length = self.process_length
+        # for i in range(length):
+        invariable_tuple_list = []
+        star_list_for_single_image = self.star_obj_list_list[idx]
+        single_length = len(star_list_for_single_image)
+        index_list = [i for i in range(single_length)]
+        # 3表示选3个元素，因为三角形有三个顶点
+        combinations = list(itertools.combinations(index_list, 3))
+        for comb in combinations:
+            point0 = star_list_for_single_image[comb[0]]
+            point1 = star_list_for_single_image[comb[1]]
+            point2 = star_list_for_single_image[comb[2]]
+            invariant_obj = Invariant_Properties_Calculation(
+                [point0["center_cor"], point1["center_cor"], point2["center_cor"]])
+            invariable_tuple_list.append(invariant_obj)
 
+        invariable_tuple_list.sort(key=lambda x: x["perimeter"])
+        self.triangle_list_list[idx] = invariable_tuple_list
+
+    def Triangle_Analysis_BatchProcess(self, do_debug):
         length = self.process_length
-        # Todo 多线程优化下面的For循环
-        for i in range(length):
-            invariable_tuple_list = []
-            star_list_for_single_image = self.star_obj_list_list[i]
-            single_length = len(star_list_for_single_image)
-            index_list = [i for i in range(single_length)]
-            # 3表示选3个元素，因为三角形有三个顶点
-            combinations = list(itertools.combinations(index_list, 3))
-            for comb in combinations:
-                point0 = star_list_for_single_image[comb[0]]
-                point1 = star_list_for_single_image[comb[1]]
-                point2 = star_list_for_single_image[comb[2]]
-                invariant_obj = Invariant_Properties_Calculation(
-                    [point0["center_cor"], point1["center_cor"], point2["center_cor"]])
-                invariable_tuple_list.append(invariant_obj)
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = {executor.submit(self.Triangle_Analysis, idx, do_debug): idx
+                       for idx in range(length)}
 
-            invariable_tuple_list.sort(key=lambda x: x["perimeter"])
-            self.triangle_list_list[i] = invariable_tuple_list
+            for future in concurrent.futures.as_completed(futures):
+                idx = futures[future]
+                try:
+                    future.result()
+                    # Todo 添加时间返回值
+                    print(f"Triangle_Analysis for image {idx} done ")
+                except Exception as exc:
+                    print(f'Task generated an exception: {exc}')
+                    traceback.print_exc()
+
+            executor.shutdown()
+
+        if do_debug:
+            for idx, img in enumerate(self.stretch_images_list):
+                img_name = self.fits_path_list[idx].stem
+                _dtp = os.path.join(self.debug_tmp_path, img_name, "stretch_img")
+                self.write_img(img, _dtp)
 
     def Core_RASP(self, reference_index: int = 0, perimeter_tolerance: float = 3.0,
                   angle_tolerance: float = 1.0, side_tolerance: float = 1.0, do_debug: bool = False):
@@ -303,12 +300,16 @@ class ImageStackObject():
         # Todo Refernce Imgae 不能直接取第0个，需要用程序自动寻找最佳的参考图片，要求参考图片位于所有图片中最居中的位置。
         """
         reference_img = self.debayer_images_list[reference_index]
-        reference_triangle_objs = self.triangle_list_list[reference_index]
+        reference_img_st = self.stretch_images_list[reference_index]
+        self.realtime_stack_img_st_debug = reference_img_st.copy().astype(np.uint32)
         self.realtime_stack_img = reference_img.copy().astype(np.uint32)
+
+        reference_triangle_objs = self.triangle_list_list[reference_index]
         for i in range(self.process_length):
             print(f"=============Processing {i}-th stack=============")
             if i == reference_index:
-                self.Update_Realtime_View(i, do_debug)
+                self.Update_Realtime_View(i, "debayer", do_debug=do_debug)
+                self.Update_Realtime_View(i, "stretch","realtime_stack_debug", do_debug)
                 continue
             # if i == 2:
             #     print("This is Debug index")
@@ -319,30 +320,57 @@ class ImageStackObject():
             registration_pair_list = Triangle_Registration(reference_triangle_objs, compare_triangle_objs,
                                                            perimeter_tolerance, angle_tolerance, side_tolerance)
 
-            trans_compr_img = Homographies_Transformation(compare_stretch_image, compare_debayer_image, registration_pair_list, do_debug,
-                                                          self.debug_tmp_path)
+            cv2.imwrite("11.jpg", compare_stretch_image)
 
-            self.realtime_stack_img = Add_Integration(self.realtime_stack_img, trans_compr_img, i)
-            self.Update_Realtime_View(i, do_debug)
+            if do_debug:
+                trans_compr_img, trans_flag_map, trans_compr_img_st = Homographies_Transformation(compare_stretch_image,
+                                                                                                  compare_debayer_image,
+                                                                                                  registration_pair_list,
+                                                                                                  do_debug,
+                                                                                                  self.debug_tmp_path)
+                self.realtime_stack_img_st_debug = Add_Integration(self.realtime_stack_img_st_debug, trans_compr_img_st, trans_flag_map, i)
+                self.Update_Realtime_View(i, "stretch","realtime_stack_debug", do_debug)
+
+            else:
+                trans_compr_img, trans_flag_map = Homographies_Transformation(compare_stretch_image,
+                                                                              compare_debayer_image,
+                                                                              registration_pair_list, do_debug,
+                                                                              self.debug_tmp_path)
+
+            self.realtime_stack_img = Add_Integration(self.realtime_stack_img, trans_compr_img, trans_flag_map, i)
+            self.Update_Realtime_View(i,"debayer", do_debug=do_debug)
 
         return self.realtime_stack_img
 
-    def Update_Realtime_View(self, stack_round, do_debug: bool):
+    def Update_Realtime_View(self, stack_round, type_code,realtime_stack_path="realtime_stack",do_debug: bool = False):
         # 调用一次该函数更新前端显示的self.realtime_stack_img，逻辑上需要这个
-        if do_debug:
-            stretch_realtime_stack = Stretch_RealtimeStack(self.realtime_stack_img.copy().astype(np.uint16), self.rgb_flag)
-            realtime_stack_path = os.path.join(self.debug_tmp_path, "realtime_stack")
+        if type_code=="debayer":
+            stretch_realtime_stack = Stretch_RealtimeStack(self.realtime_stack_img.copy().astype(np.uint16),
+                                                           self.rgb_flag)
+            realtime_stack_path = os.path.join(self.debug_tmp_path, realtime_stack_path)
             if not os.path.exists(realtime_stack_path):
                 os.mkdir(realtime_stack_path)
 
             cv2.imwrite(f"{realtime_stack_path}/{stack_round}.jpg", stretch_realtime_stack)
-            # cv2.imwrite(f"{realtime_stack_path}/{stack_round}_De.jpg", self.realtime_stack_img)
+            print(f"Write image to {realtime_stack_path}/{stack_round}.jpg")
+        elif type_code=="stretch":
+            stretch_realtime_stack = self.realtime_stack_img_st_debug.astype(np.uint8)
+            realtime_stack_path = os.path.join(self.debug_tmp_path, realtime_stack_path)
+            if not os.path.exists(realtime_stack_path):
+                os.mkdir(realtime_stack_path)
+            cv2.imwrite(f"{realtime_stack_path}/{stack_round}.jpg", stretch_realtime_stack)
+            print(f"Write image to {realtime_stack_path}/{stack_round}.jpg")
+
+        else:
+            assert "Error code"
+
+
 
     def ImageStackProcess(self, do_debug):
         self.ImageStretch_BatchProcess(do_debug=do_debug)
         self.StarletAnalycis_BatchProcess(do_debug=do_debug)
-        self.RecursiveStarDetect_MultiStars(do_debug=do_debug, top_n=8)
-        self.Triangle_Analysis(do_debug=do_debug)
+        self.MultiStarsRedirection_BatchProcess(do_debug=do_debug, top_n=10)
+        self.Triangle_Analysis_BatchProcess(do_debug=do_debug)
         result_img = self.Core_RASP(do_debug=do_debug)
         stretch_realtime_stack = Stretch_RealtimeStack(result_img.copy().astype(np.uint16), self.rgb_flag)
 

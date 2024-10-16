@@ -6,6 +6,7 @@ import os
 import numpy as np
 from .base import *
 
+
 def extract_stars(starlet_res_img, grayimg, info_log, do_debug):
     _, thres_img = cv2.threshold(starlet_res_img, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     contours, _ = cv2.findContours(thres_img, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
@@ -53,6 +54,12 @@ def extract_stars(starlet_res_img, grayimg, info_log, do_debug):
                 info_log += "checkElongated failed\n"
                 continue
 
+            cir_flag, circularity = CircularityCheck(contour)
+            if not cir_flag:
+            # if False:
+                info_log += "Circle check failed \n"
+                continue
+
             d_log, dim_check, dim_std = PointSpreadFunctionCheck(grayimg[up:down, left:right])
             info_log += d_log
             if do_debug:
@@ -68,6 +75,7 @@ def extract_stars(starlet_res_img, grayimg, info_log, do_debug):
                 "radius": radius,
                 "hfr": hfr,
                 "dim_std": dim_std,
+                "circularity": circularity,
                 "lightness": lightness
             }
             star_obj_list.append(star_obj)
@@ -78,8 +86,6 @@ def extract_stars(starlet_res_img, grayimg, info_log, do_debug):
             info_log += f"area: {area}   minimun_area:{minimun_area}    maximun_area:{maximun_area} \n"
 
     return star_obj_list
-
-
 
 
 def StarObjList_ROICheck_Redirection(star_obj_list, roi_percentage, stretch_img, img_name, do_debug, debug_tmp_path):
@@ -100,10 +106,15 @@ def StarObjList_ROICheck_Redirection(star_obj_list, roi_percentage, stretch_img,
     img_shapes = stretch_img.shape
     width = img_shapes[0]
     height = img_shapes[1]
+    # width_start = int(width * (1 - roi_percentage) // 2)
+    # width_end = int(width_start + width * roi_percentage)
+    # height_start = int(height * (1 - roi_percentage) // 2)
+    # height_end = int(height_start + height * roi_percentage)
     width_start = int(width * (1 - roi_percentage) // 2)
     width_end = int(width_start + width * roi_percentage)
     height_start = int(height * (1 - roi_percentage) // 2)
     height_end = int(height_start + height * roi_percentage)
+
 
     roi_star_obj_list = []
     for star_obj in star_obj_list:
@@ -115,8 +126,8 @@ def StarObjList_ROICheck_Redirection(star_obj_list, roi_percentage, stretch_img,
         expand_edge_pixel = radius
 
         if (
-                center_width - radius - expand_edge_pixel > width_start and center_width + radius + expand_edge_pixel < width_end
-                and center_height - radius - expand_edge_pixel > height_start and center_height + radius + expand_edge_pixel < height_end):
+                center_width - radius - expand_edge_pixel > height_start and center_width + radius + expand_edge_pixel < height_end
+                and center_height - radius - expand_edge_pixel > width_start and center_height + radius + expand_edge_pixel < width_end):
             # 星点在ROI内
             roi_star_obj_list.append(star_obj)
 
@@ -140,10 +151,61 @@ def StarObjList_ROICheck_Redirection(star_obj_list, roi_percentage, stretch_img,
             chosen_star["bounding_cor"] = re_bounding_cor
 
     e = time.time()
-    print(f"redireciton and debug --- {e - s}")
 
     return roi_star_obj_list
 
+
+def StarDetect_DebugTmp(tmp_thres, stretch_img, chosen_stars_list,roi_star_obj_list, img_name,debug_tmp_path):
+    def write_img(img, _dtp):
+        if not os.path.exists(_dtp):
+            os.mkdir(_dtp)
+        cv2.imwrite(f"{_dtp}/tmp.jpg", img)
+
+    if len(stretch_img.shape) == 3:
+        tmp_gray = cv2.cvtColor(stretch_img, cv2.COLOR_RGB2GRAY)
+    else:
+        tmp_gray = stretch_img
+
+    for star_idx, chosen_star in enumerate(chosen_stars_list):
+        mark_img = cv2.circle(stretch_img, chosen_star["center_cor"], chosen_star["radius"] + 5,
+                              (0, 255, 0),
+                              1)
+        mark_img = cv2.putText(mark_img,
+                               str(round(chosen_star["hfr"], 2)) + " " + str(
+                                   round(chosen_star["circularity"], 2)),
+                               chosen_star["center_cor"], cv2.FONT_HERSHEY_SIMPLEX, 1.0,
+                               (0, 255, 0), 1,
+                               cv2.LINE_AA)
+        _dtp = os.path.join(debug_tmp_path, img_name, "star_mark")
+        write_img(mark_img, _dtp)
+
+        # single star's debug tmp
+        single_star_tmp_path = os.path.join(debug_tmp_path, img_name, "recenter")
+        if not os.path.exists(single_star_tmp_path):
+            os.mkdir(single_star_tmp_path)
+        chosen_star_thres_visualize = tmp_thres[
+                                      chosen_star["bounding_cor"][0]:chosen_star["bounding_cor"][1],
+                                      chosen_star["bounding_cor"][2]:chosen_star["bounding_cor"][3]]
+        re_center_gray_star = tmp_gray[chosen_star["bounding_cor"][0]:chosen_star["bounding_cor"][1],
+                              chosen_star["bounding_cor"][2]:chosen_star["bounding_cor"][3]]
+
+        cv2.imwrite(f"{single_star_tmp_path}/re_center_gray_star_{star_idx}.jpg", re_center_gray_star)
+        cv2.imwrite(f"{single_star_tmp_path}/re_center_thres_star_{star_idx}.jpg",
+                    chosen_star_thres_visualize)
+
+    debug_chosen_star_list = roi_star_obj_list[:5]
+    for chosen_star in debug_chosen_star_list:
+        _mark_img = cv2.circle(stretch_img, chosen_star["center_cor"], chosen_star["radius"] + 5,
+                               (255, 0, 0),
+                               1)
+        _mark_img = cv2.putText(_mark_img,
+                                str(round(chosen_star["hfr"], 2)) + " " + str(
+                                    round(chosen_star["lightness"], 2)),
+                                chosen_star["center_cor"], cv2.FONT_HERSHEY_SIMPLEX, 1.0,
+                                (255, 0, 0), 1,
+                                cv2.LINE_AA)
+        _dtp = os.path.join(debug_tmp_path, img_name, "_star_mark")
+        write_img(_mark_img, _dtp)
 
 
 def StarCenter_Redirection_Starlet(gray_star: np.ndarray, center_cor_whole, reso_scale=None,
@@ -258,5 +320,3 @@ def StarCenter_Redirection_Starlet(gray_star: np.ndarray, center_cor_whole, reso
     chosen_contour_result = choose_contour_result(multiscale_results_thres)
     re_center_whole, re_radius, re_bounding_cor_whole = extract_and_redirection(chosen_contour_result)
     return re_center_whole, re_radius, re_bounding_cor_whole
-
-

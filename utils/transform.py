@@ -1,3 +1,4 @@
+import numpy as np
 from .base import *
 import os
 import cv2
@@ -153,12 +154,17 @@ def Homographies_Transformation(compr_img_st: np.ndarray, compr_img_dy: np.ndarr
         sin = 0
         cos = 0
         for cos_v in cos_list:
+            if cos_v == 1:
+                cos = 1
+                sin = 0
+                break
             for sin_v in sin_list:
                 v = math.fabs(cos_v * cos_v + sin_v * sin_v - 1)
                 if v < min_v:
                     min_v = v
                     sin = sin_v
                     cos = cos_v
+
         return cos, sin
 
     def transform_equation_solve_three(point1, point1_prime, point2, point2_prime, point3, point3_prime):
@@ -211,7 +217,7 @@ def Homographies_Transformation(compr_img_st: np.ndarray, compr_img_dy: np.ndarr
         # print(f"cos_alpha_1: {cos_alpha_1} , cos_alpha_2:{cos_alpha_2} , cos_alpha_3:{cos_alpha_3} \n"
         #       f"sin_alpha_1: {sin_alpha_1} , sin_alpha_2:{sin_alpha_2} , sin_alpha_3:{sin_alpha_3} \n"
         #       f"final cos_alpha：{cos_alpha} , sin_alpha:{sin_alpha}")
-        print(f"final cos_alpha：{cos_alpha} , sin_alpha:{sin_alpha} \n")
+
 
         t_x_1 = x1_prime + sin_alpha * y1 - cos_alpha * x1
         t_y_1 = y1_prime - sin_alpha * x1 - cos_alpha * y1
@@ -221,10 +227,10 @@ def Homographies_Transformation(compr_img_st: np.ndarray, compr_img_dy: np.ndarr
 
         t_x = round((t_x_1 + t_x_2) / 2)
         t_y = round((t_y_1 + t_y_2) / 2)
-        print(f"t_x_1: {t_x_1} , t_x_2:{t_x_2} t_y_1: {t_y_1} , t_y_2:{t_y_2}  final t_x：{t_x} , t_y:{t_y}")
-
-        if t_x > 1000:
-            print("啊？？？？？？？？？？")
+        print("----------------------------------------------")
+        print(f"final cos_alpha: {cos_alpha:<10.4f}  sin_alpha: {sin_alpha:<10.4f}  t_x_1: {t_x_1:<10.4f}  t_x_2: {t_x_2:<10.4f}  t_y_1: {t_y_1:<10.4f}  t_y_2: {t_y_2:<10.4f}")
+        print(f"final t_x: {t_x:<10.4f}  final t_y: {t_y:<10.4f}")
+        # print(f"t_x_1: {t_x_1} , t_x_2:{t_x_2} t_y_1: {t_y_1} , t_y_2:{t_y_2}  final t_x：{t_x} , t_y:{t_y}")
 
         return alpha, t_x, t_y
 
@@ -250,8 +256,40 @@ def Homographies_Transformation(compr_img_st: np.ndarray, compr_img_dy: np.ndarr
         y_prime = np.round(y_prime).astype(int)
         output_img = np.zeros_like(img)
         output_img[y_prime, x_prime] = img[y_coords.ravel(), x_coords.ravel()]
-        return output_img
+        flag_map = np.zeros_like(img)
+        flag_map[y_prime, x_prime] = True
 
+        return output_img, flag_map
+
+    def zscore_Remove_Outliers(data, threshold=3):
+        epsilon = 1e-10  # 一个非常小的正数，用于避免零除
+        mean = np.mean(data)
+        std = np.std(data)
+        z_scores = [(x - mean) / (std + epsilon) for x in data]
+        filtered_list = [x for i, x in enumerate(data) if abs(z_scores[i]) <= threshold]
+        return filtered_list
+
+    def IQR_Remove_Outliers(data):
+        # 利用四分位距法计算得到一个阈值
+        q25, q75 = np.percentile(data, 25), np.percentile(data, 75)
+        iqr = q75 - q25
+        lower_bound = q25 - 1.5 * iqr
+        upper_bound = q75 + 1.5 * iqr
+        filtered_data = [x for x in data if lower_bound <= x <= upper_bound]
+        return filtered_data
+
+    def MAD_Remove_Outliers(data, threshold=mad_threshold):
+        data = np.asarray(data)
+        epsilon = 1e-10  # 一个非常小的正数，用于避免零除
+        median = np.median(data)
+        abs_deviation = np.abs(data - median)
+        mad = np.median(abs_deviation)
+        modified_z_scores = 0.6745 * abs_deviation / (mad+epsilon)  # 0.6745 是 Z-score 调整因子
+        flag_index = modified_z_scores < threshold
+        filtered_data = data[modified_z_scores < threshold]
+        return filtered_data, flag_index
+
+    # 正式流程
     """
     坐标变换矩阵中，不考虑拍摄时焦段变化的情况，λ默认为1
     :param align_img:
@@ -291,21 +329,25 @@ def Homographies_Transformation(compr_img_st: np.ndarray, compr_img_dy: np.ndarr
         tx_list.append(t_x)
         ty_list.append(t_y)
 
-    alpha = np.average(alpha_list)
-    t_x = np.average(tx_list)
-    t_y = np.average(ty_list)
+    filtered_alpha_list, flag_index = MAD_Remove_Outliers(alpha_list)
+    filtered_tx_list = np.asarray(tx_list)[flag_index]
+    filtered_ty_list = np.asarray(ty_list)[flag_index]
+
+    # filtered_tx_list, flag_index = MAD_Remove_Outliers(tx_list)
+    # filtered_ty_list, flag_index = MAD_Remove_Outliers(ty_list)
+
+    alpha = np.average(filtered_alpha_list)
+    t_x = np.average(filtered_tx_list)
+    t_y = np.average(filtered_ty_list)
     t_x = -t_x
     t_y = -t_y
 
     matrix = gen_homographies_transform_matrix(alpha, t_x, t_y)
 
-    trans_compr_img = apply_homographies_transform_matrix(matrix, compr_img_dy)
-    if do_debug:
-        print(matrix)
-        align_dir = "align_dir"
-        d_path = os.path.join(debug_tmp_path, align_dir)
-        if not os.path.exists(d_path):
-            os.mkdir(d_path)
-        cv2.imwrite(f"{d_path}/res.jpg", trans_compr_img)
+    trans_compr_img, trans_flag_map = apply_homographies_transform_matrix(matrix, compr_img_dy)
 
-    return trans_compr_img
+    if do_debug:
+        trans_compr_img_st, _ = apply_homographies_transform_matrix(matrix, compr_img_st)
+        return trans_compr_img, trans_flag_map, trans_compr_img_st
+    else:
+        return trans_compr_img, trans_flag_map

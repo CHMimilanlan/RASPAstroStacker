@@ -1,10 +1,20 @@
 import numpy as np
 import math
+import yaml
+import cv2
 
+with open(r'C:\Workman02\python\OtherProject\ImageStack\Demo01_MyStack\utils\config.yaml', 'r') as file:
+    config = yaml.safe_load(file)
+min_aspect_ratio = config['thresholds']['min_aspect_ratio']
+min_distri_thresh = config['thresholds']['min_distri_thresh']
+min_dim_ratio = config['thresholds']['min_dim_ratio']
+min_circularity = config['thresholds']['min_circularity']
+max_circularity = config['thresholds']['max_circularity']
+mad_threshold = config['thresholds']['mad_threshold']
 
 
 def CheckDistribution(stretch_img: np.ndarray):
-    distri_thresh = 10
+    distri_thresh = min_distri_thresh
     max_sample = np.max(stretch_img)
     min_sample = np.min(stretch_img)
     if max_sample - min_sample < distri_thresh:
@@ -13,6 +23,7 @@ def CheckDistribution(stretch_img: np.ndarray):
     else:
         # The distribution of pixel value is too close
         return False
+
 
 def Cal_Middev(mid: float, img: np.ndarray):
     mid_dev = np.median(np.abs(np.subtract(img, mid)))
@@ -30,7 +41,7 @@ def CalScale(img, resize_size: int = 2048):
 
 
 def checkElongated(width: int, height: int):
-    minlongratio = 1.4
+    minlongratio = min_aspect_ratio
     if width > height:
         ratio = width / height
     else:
@@ -43,9 +54,24 @@ def checkElongated(width: int, height: int):
         return False
 
 
+def CircularityCheck(contour):
+    area = cv2.contourArea(contour)
+    perimeter = cv2.arcLength(contour, True)
+    if perimeter > 0:
+        circularity = (4 * np.pi * area) / (perimeter ** 2)
+    else:
+        circularity = 0
+
+    # 判断圆形度
+    if min_circularity < circularity < max_circularity:  # 圆形度接近1
+        return True, circularity
+    else:
+        return False, circularity
+
+
 def PointSpreadFunctionCheck(img: np.ndarray):
     dim_log = ""
-    dimratio = 8
+    dimratio = min_dim_ratio
     shps = img.shape
     std = np.std(img)
     dim_log += f"dim_std: {std} \n"
@@ -95,9 +121,13 @@ def HFR_Lightness_Calculation(inImage: np.ndarray, raduis: float):
     return hfr, lightness
 
 
-def Add_Integration(stacking_img, trans_cmp_img, stack_round, add_type="average"):
+def Add_Integration(stacking_img, trans_cmp_img, trans_flag_map, stack_round, add_type="average"):
     # trans_cmp_img = trans_cmp_img.astype(np.uint32)
-    result_img = (stacking_img * (stack_round) + trans_cmp_img) / (stack_round + 1)
+    # result_img = (stacking_img * (stack_round) + trans_cmp_img) / (stack_round + 1)
+    result_img = np.where(
+        trans_flag_map == True,
+        (stacking_img * (stack_round) + trans_cmp_img) / (stack_round + 1),
+        stacking_img
+    )
+
     return result_img
-
-
