@@ -21,7 +21,7 @@ pip install -r requirements.txt
 ## Usage
 1. git clone this repo
 ```
-git clone https://github.com/CHMimilanlan/RASPStacker.git
+git clone https://github.com/CHMimilanlan/RASPAstroStacker.git
 ```
 2. Make a directory including you files to process
 3. (Optional) If you want to debug, make a debug directory
